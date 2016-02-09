@@ -1,0 +1,209 @@
+#!/bin/bash
+set -e
+
+usage() {
+cat <<-EOF
+Usage:       set-env [command] [app] [service] [environment] [key] [value]
+
+Commands:
+  add
+  ls
+  rm
+
+Options: 
+  -d : print the environment variables after altering them
+
+Description: 
+EOF
+}
+
+validate_key() {
+  if [[ ! "$key" =~ ^[_0-9A-Z]*$ ]]; then
+    log "environment variable names have to be all uppercase, be either letters, numbers, or underscores. No other characters are allowed"
+    exit 1
+  fi
+}
+
+log() {
+ if [[ -n "$verbose" ]]; then
+   echo "$1"
+ fi
+}
+
+encrypt() {
+  local path="$1"; shift
+  local data="$1"; shift
+  local key_id="$key_id"; shift
+  aws kms encrypt --key-id "$key_id" --plaintext "$data" --query CiphertextBlob --output text | base64 --decode > "$path"
+}
+
+decrypt() {
+  decrypted="$(aws kms decrypt --ciphertext-blob "fileb://$local_path_enc" --query Plaintext --output text | base64 --decode)"
+}
+
+push() {
+  local local_path=$1; shift
+  local remote_path=$1; shift
+  log "pushing encrypted blob from $local_path to $remote_path"
+  aws s3 cp "$local_path" "$remote_path" > /dev/null 2>&1
+}
+
+pull() {
+  local local_path=$1; shift
+  local remote_path=$1; shift
+  log "pulling encrypted blob from $remote_path to $local_path"
+  aws s3 cp "$remote_path" "$local_path" > /dev/null 2>&1
+}
+
+clean() {
+  local local_path=$1; shift
+  log "cleaning temp files"
+  rm "$local_path"
+}
+
+create_key() {
+  key_id=$(aws kms list-aliases --output text | grep "$app" | awk '{print $4}')
+  if [[ -z "$key_id" ]]; then
+    log "creating key"
+    key_id=$(aws kms create-key --query "KeyMetadata.KeyId" --output "text")
+    log "creating key alias $app for key id $key_id"
+    aws kms create-alias --alias-name="alias/$app" --target-key-id="$key_id"
+  else
+    log "found key with alias $app, skipping key creation"
+  fi
+}
+
+create_bucket() {
+  if ! aws s3 ls | grep "$bucket_name" > /dev/null 2>&1; then
+    log "bucket $bucket_name doesn't exist, creating"
+    aws s3 mb "s3://$bucket_name" > /dev/null 2>&1
+  fi
+}
+
+exists() {
+  if aws s3 ls "$remote_path" > /dev/null 2>&1; then
+    pull "$local_path_enc" "$remote_path"
+    return 0
+  else
+    return 1
+  fi
+}
+
+list() {
+  if exists; then
+    decrypt
+    while IFS= read -r line
+    do
+      printf '%s\n' "$line"
+    done <<< "$decrypted"
+  fi
+}
+
+add() {
+  mkdir -p "$path"
+  if exists; then
+    decrypt
+    if grep "^$key\=" <<< "$decrypted" > /dev/null 2>&1; then
+      output=$(sed "s/^\($key\=\).*/\1$value/" <<< "$decrypted")
+    else
+      output="${decrypted}"$'\n'"${env_var}"$'\n'
+    fi
+  else
+    output="$env_var"
+  fi
+  encrypt "$local_path_enc" "$output" "$key_id"
+  push "$local_path_enc" "$remote_path"
+  clean "$local_path_enc"
+}
+
+remove() {
+  mkdir -p "$path"
+  if exists; then
+    decrypt
+    if grep "^$key\=" <<< "$decrypted" > /dev/null 2>&1; then
+      output=$(sed "/^\($key\=\).*/d" <<< "$decrypted")
+      encrypt "$local_path_enc" "$output" "$key_id"
+      push "$local_path_enc" "$remote_path"
+      clean "$local_path_enc"
+    else
+      echo "$key not found"
+    fi
+  fi
+}
+
+validate() {
+  if [ "$1" -lt "$2" ]; then
+    log "you need to provide args $#"
+    usage
+    exit 1
+  fi
+}
+cmd=$1; shift
+
+while getopts ":v:" o; do
+  case "${o}" in
+    v)
+      verbose=${OPTARG}
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+case $cmd in
+  "add")
+    validate $# 5
+    validate_key
+    app=$1; shift
+    service=$1; shift
+    env=$1; shift
+    key=$1; shift
+    value=$1; shift
+    env_var="$key=$value"
+    ;;
+
+  "ls")
+    validate $# 3
+    app=$1; shift
+    service=$1; shift
+    env=$1; shift
+    ;;
+  "rm")
+    validate $# 4
+    app=$1; shift
+    service=$1; shift
+    env=$1; shift
+    key=$1; shift
+    ;;
+esac
+
+bucket_name="$app-secrets"
+path=~/.kms_secrets/"$bucket_name"/"$env"
+local_path="$path/$service"
+local_path_enc="${local_path}.pem"
+remote_path="s3://$bucket_name/$env/${service}.pem"
+
+create_key
+create_bucket
+
+case $cmd in
+  "add")
+    add
+    ;;
+
+  "ls")
+    list 
+    ;;
+
+  "rm")
+    echo "Are you sure you want to remove the variable $key, y/n"
+    read -r confirm
+    if [[ "$confirm" = "y" ]]; then
+      remove
+    else
+      echo "aborting"
+    fi
+    ;;
+esac
