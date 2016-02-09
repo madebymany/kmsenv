@@ -138,7 +138,11 @@ validate() {
     exit 1
   fi
 }
-cmd=$1; shift
+
+if [ $# = 0 ]; then
+  usage
+  exit 1
+fi
 
 while getopts ":v:" o; do
   case "${o}" in
@@ -152,6 +156,7 @@ while getopts ":v:" o; do
   esac
 done
 
+cmd=$1; shift
 case $cmd in
   "add")
     validate $# 5
@@ -176,6 +181,10 @@ case $cmd in
     service=$1; shift
     env=$1; shift
     key=$1; shift
+    ;;
+  *)
+    usage
+    exit 1
     ;;
 esac
 
