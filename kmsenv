@@ -85,6 +85,7 @@ exists() {
     pull "$local_path_enc" "$remote_path"
     return 0
   else
+    echo "Couldn't find S3 path $remote_path"
     return 1
   fi
 }
@@ -104,6 +105,7 @@ add() {
   if exists; then
     decrypt
     if grep "^$key\=" <<< "$decrypted" > /dev/null 2>&1; then
+      value="${value//\//\\/}"
       output=$(sed "s/^\($key\=\).*/\1$value/" <<< "$decrypted")
     else
       output="${decrypted}"$'\n'"${env_var}"$'\n'
