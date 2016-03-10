@@ -1,19 +1,128 @@
 #!/bin/bash
 set -e
 
+define(){ IFS=$'\n' read -r -d '' "${1}" || true; }
+
+declare service_definition
+declare namespace_definition
+declare environment_definition
+declare key_definition
+
+define service_definition <<EOF
+[service]
+  the service you wish to list environment variables for
+EOF
+
+define environment_definition <<EOF
+[environment]
+  the environment you wish to manipulate environment variables for.
+EOF
+
+define namespace_definition <<EOF
+[namespace]
+  this is used to infer the bucket name to create to store the files in, also creates a KMS key to encrypt the files with.
+EOF
+
+define key_definition <<EOF
+[key]
+  the key of the environment variable key/value pair that you wish to remove. This needs to be all uppercase.
+EOF
+
 usage() {
 cat <<-EOF
-Usage:       set-env [command] [app] [service] [environment] [key] [value]
+Usage:       $0 [command] [namespace] [environment] -v
 
-Commands:
+[commands]:
+                 
   add
-  ls
-  rm
+  list
+  list-services
+  remove
+  copy
+
+$namespace_definition
+
+$environment_definition
 
 Options: 
-  -d : print the environment variables after altering them
+  -v : print verbose output of commands
 
-Description: 
+Description:
+  Manage enviroment variable files encrypted with KMS and stored in S3. It wraps the AWS CLI tools, so this is expected to be installed
+  on the system. Allows you to separate these environment variables by environments, and services that you wish to load them into.
+EOF
+}
+
+usage_list() {
+cat <<-EOF
+Usage:       $0 list [namespace] [environment] [service]
+
+$namespace_definition
+
+$environment_definition
+
+$service_definition
+
+EOF
+}
+
+usage_list_services() {
+cat <<-EOF
+Usage:       $0 list-services [namespace] [environment]
+
+$namespace_definition
+
+$environment_definition
+
+Description:
+  list the services that have an environment file under and a certain environment
+EOF
+}
+
+usage_remove() {
+cat <<-EOF
+Usage:       $0 remove [namespace] [environment] [service] [key]
+
+$namespace_definition
+
+$environment_definition
+
+$service_definition
+
+$key_definition
+EOF
+}
+
+usage_add() {
+cat <<-EOF
+Usage:       $0 add [namespace] [environment] [service] [key] [value]
+
+$namespace_definition
+
+$environment_definition
+
+$service_definition
+
+$key_definition
+
+[value]
+  the value you wish to set for the key.
+EOF
+}
+
+usage_copy() {
+cat <<-EOF
+Usage:       $0 copy [namespace] [environment] [service source] [service destination]
+
+$namespace_definition
+
+$environment_definition
+
+[service source]
+  the environment variables for a service you wish to copy from
+
+[service destination]
+  the service you wish to copy and environment variable file to.
 EOF
 }
 
@@ -76,7 +185,7 @@ create_key() {
 create_bucket() {
   if ! aws s3 ls | grep "$bucket_name" > /dev/null 2>&1; then
     log "bucket $bucket_name doesn't exist, creating"
-    aws s3 mb "s3://$bucket_name" > /dev/null 2>&1
+    aws s4 mb "s3://$bucket_name" > /dev/null 2>&1
   fi
 }
 
@@ -97,6 +206,26 @@ list() {
     do
       printf '%s\n' "$line"
     done <<< "$decrypted"
+  fi
+}
+
+list-services() {
+  aws s3 ls "$remote_env_path" | awk '{sub("\.pem", "", $4); print $4 }'
+}
+
+copy() {
+  if exists; then
+    if aws s3 ls "$remote_path_copy" > /dev/null 2>&1; then
+      echo "$service_to environment file already exists, do you want to overwrite? y/n"
+      read -r confirm
+      if [[ "$confirm" = "y" ]]; then
+        aws s3 cp "$remote_path" "$remote_path_copy" > /dev/null 2>&1
+      else 
+        echo "aborting"
+      fi
+    else 
+      aws s3 cp "$remote_path" "$remote_path_copy" > /dev/null 2>&1
+    fi
   fi
 }
 
@@ -136,7 +265,7 @@ remove() {
 validate() {
   if [ "$1" -lt "$2" ]; then
     log "you need to provide args $#"
-    usage
+    eval "usage_$3"
     exit 1
   fi
 }
@@ -149,7 +278,7 @@ fi
 while getopts ":v:" o; do
   case "${o}" in
     v)
-      verbose=${OPTARG}
+      verbose=$1; shift
       ;;
     *)
       usage
@@ -161,28 +290,40 @@ done
 cmd=$1; shift
 case $cmd in
   "add")
-    validate $# 5
+    validate $# 5 "$cmd"
     validate_key
     app=$1; shift
-    service=$1; shift
     env=$1; shift
+    service=$1; shift
     key=$1; shift
     value=$1; shift
     env_var="$key=$value"
     ;;
 
-  "ls")
-    validate $# 3
+  "list")
+    validate $# 3 "$cmd"
     app=$1; shift
+    env=$1; shift
     service=$1; shift
+    ;;
+  "list-services")
+    validate $# 2 "${cmd/-/_}"
+    app=$1; shift
     env=$1; shift
     ;;
-  "rm")
-    validate $# 4
+  "remove")
+    validate $# 4 "$cmd"
     app=$1; shift
-    service=$1; shift
     env=$1; shift
+    service=$1; shift
     key=$1; shift
+    ;;
+  "copy")
+    validate $# 4 "$cmd"
+    app=$1; shift
+    env=$1; shift
+    service=$1; shift
+    service_to=$1; shift
     ;;
   *)
     usage
@@ -195,6 +336,8 @@ path=~/.kms_secrets/"$bucket_name"/"$env"
 local_path="$path/$service"
 local_path_enc="${local_path}.pem"
 remote_path="s3://$bucket_name/$env/${service}.pem"
+remote_env_path="s3://$bucket_name/$env/"
+remote_path_copy="s3://$bucket_name/$env/${service_to}.pem"
 
 create_key
 create_bucket
@@ -204,11 +347,19 @@ case $cmd in
     add
     ;;
 
-  "ls")
+  "list")
     list 
     ;;
 
-  "rm")
+  "list-services")
+    list-services 
+    ;;
+    
+  "copy")
+    copy
+    ;;
+
+  "remove")
     echo "Are you sure you want to remove the variable $key, y/n"
     read -r confirm
     if [[ "$confirm" = "y" ]]; then
