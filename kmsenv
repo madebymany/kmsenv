@@ -8,6 +8,8 @@ declare namespace_definition
 declare environment_definition
 declare key_definition
 
+script="$(basename "$0")"
+
 define service_definition <<EOF
 [service]
   the service you wish to list environment variables for
@@ -30,7 +32,7 @@ EOF
 
 usage() {
 cat <<-EOF
-Usage:       $0 [command] [namespace] [environment] -v
+Usage:       $script [command] [namespace] [environment] -v
 
 [commands]:
                  
@@ -55,7 +57,7 @@ EOF
 
 usage_list() {
 cat <<-EOF
-Usage:       $0 list [namespace] [environment] [service]
+Usage:      $script list [namespace] [environment] [service]
 
 $namespace_definition
 
@@ -68,7 +70,7 @@ EOF
 
 usage_list_services() {
 cat <<-EOF
-Usage:       $0 list-services [namespace] [environment]
+Usage:      $script list-services [namespace] [environment]
 
 $namespace_definition
 
@@ -81,7 +83,7 @@ EOF
 
 usage_remove() {
 cat <<-EOF
-Usage:       $0 remove [namespace] [environment] [service] [key]
+Usage:      $script remove [namespace] [environment] [service] [key]
 
 $namespace_definition
 
@@ -95,7 +97,7 @@ EOF
 
 usage_add() {
 cat <<-EOF
-Usage:       $0 add [namespace] [environment] [service] [key] [value]
+Usage:      $script add [namespace] [environment] [service] [key] [value]
 
 $namespace_definition
 
@@ -112,7 +114,7 @@ EOF
 
 usage_copy() {
 cat <<-EOF
-Usage:       $0 copy [namespace] [environment] [service source] [service destination]
+Usage:      $script copy [namespace] [environment] [service source] [service destination]
 
 $namespace_definition
 
