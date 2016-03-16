@@ -37,9 +37,11 @@ Usage:       $script [command] [namespace] [environment] -v
 [commands]:
                  
   add
+  key-id
   list
   list-services
   remove
+  remove-service
   copy
 
 $namespace_definition
@@ -55,7 +57,15 @@ Description:
 EOF
 }
 
-usage_list() {
+usage-key-id() {
+cat <<-EOF
+Usage:      $script key-id [namespace]
+
+$namespace_definition
+EOF
+}
+
+usage-list() {
 cat <<-EOF
 Usage:      $script list [namespace] [environment] [service]
 
@@ -68,7 +78,7 @@ $service_definition
 EOF
 }
 
-usage_list_services() {
+usage-list-services() {
 cat <<-EOF
 Usage:      $script list-services [namespace] [environment]
 
@@ -81,7 +91,7 @@ Description:
 EOF
 }
 
-usage_remove() {
+usage-remove() {
 cat <<-EOF
 Usage:      $script remove [namespace] [environment] [service] [key]
 
@@ -95,7 +105,19 @@ $key_definition
 EOF
 }
 
-usage_add() {
+usage-remove-service() {
+cat <<-EOF
+Usage:      $script remove-service [namespace] [environment] [service]
+
+$namespace_definition
+
+$environment_definition
+
+$service_definition
+EOF
+}
+
+usage-add() {
 cat <<-EOF
 Usage:      $script add [namespace] [environment] [service] [key] [value]
 
@@ -112,7 +134,7 @@ $key_definition
 EOF
 }
 
-usage_copy() {
+usage-copy() {
 cat <<-EOF
 Usage:      $script copy [namespace] [environment] [service source] [service destination]
 
@@ -172,8 +194,13 @@ clean() {
   rm "$local_path"
 }
 
+key-id() {
+  create_key
+  echo "$key_id"
+}
+
 create_key() {
-  key_id=$(aws kms list-aliases --output text | grep "$app" | awk '{print $4}')
+  key_id="$(aws kms list-aliases --output text | grep "\salias/$app\s" | awk '{print $4}')"
   if [[ -z "$key_id" ]]; then
     log "creating key"
     key_id=$(aws kms create-key --query "KeyMetadata.KeyId" --output "text")
@@ -196,7 +223,7 @@ exists() {
     pull "$local_path_enc" "$remote_path"
     return 0
   else
-    echo "Couldn't find S3 path $remote_path"
+    log "couldn't find S3 path $remote_path"
     return 1
   fi
 }
@@ -253,13 +280,39 @@ remove() {
   mkdir -p "$path"
   if exists; then
     decrypt
-    if grep "^$key\=" <<< "$decrypted" > /dev/null 2>&1; then
-      output=$(sed "/^\($key\=\).*/d" <<< "$decrypted")
+    output=$decrypted
+    for key in "$@"
+    do
+      if grep "^$key\=" <<< "$output" > /dev/null 2>&1; then
+        echo "Are you sure you want to remove the variable $key, y/n"
+        read -r confirm
+        if [[ "$confirm" = "y" ]]; then
+          output=$(sed "/^\($key\=\).*/d" <<< "$output")
+        else
+          echo "aborting"
+        fi
+      else
+        echo "$key not found"
+      fi
+    done
+    if [[ -n "$output" ]]; then
       encrypt "$local_path_enc" "$output" "$key_id"
       push "$local_path_enc" "$remote_path"
       clean "$local_path_enc"
     else
-      echo "$key not found"
+      aws s3 rm "$remote_path" > /dev/null 2>&1
+    fi
+  fi
+}
+
+remove-service() {
+  if exists; then
+    echo "are you sure you want to remove service $service for environment $env? y/n"
+    read -r confirm
+    if [[ "$confirm" = "y" ]]; then
+      aws s3 rm "$remote_path" > /dev/null 2>&1
+    else 
+      echo "aborting"
     fi
   fi
 }
@@ -267,7 +320,7 @@ remove() {
 validate() {
   if [ "$1" -lt "$2" ]; then
     log "you need to provide args $#"
-    eval "usage_$3"
+    eval "usage-$3"
     exit 1
   fi
 }
@@ -301,7 +354,10 @@ case $cmd in
     value=$1; shift
     env_var="$key=$value"
     ;;
-
+  "key-id")
+    validate $# 1 "$cmd"
+    app=$1; shift
+    ;;
   "list")
     validate $# 3 "$cmd"
     app=$1; shift
@@ -309,7 +365,7 @@ case $cmd in
     service=$1; shift
     ;;
   "list-services")
-    validate $# 2 "${cmd/-/_}"
+    validate $# 2 "$cmd"
     app=$1; shift
     env=$1; shift
     ;;
@@ -318,7 +374,12 @@ case $cmd in
     app=$1; shift
     env=$1; shift
     service=$1; shift
-    key=$1; shift
+    ;;
+  "remove-service")
+    validate $# 3 "$cmd"
+    app=$1; shift
+    env=$1; shift
+    service=$1; shift
     ;;
   "copy")
     validate $# 4 "$cmd"
@@ -349,6 +410,10 @@ case $cmd in
     add
     ;;
 
+  "key-id")
+    key-id 
+    ;;
+
   "list")
     list 
     ;;
@@ -362,12 +427,10 @@ case $cmd in
     ;;
 
   "remove")
-    echo "Are you sure you want to remove the variable $key, y/n"
-    read -r confirm
-    if [[ "$confirm" = "y" ]]; then
-      remove
-    else
-      echo "aborting"
-    fi
+    remove "$@"
+    ;;
+
+  "remove-service")
+    remove-service
     ;;
 esac
