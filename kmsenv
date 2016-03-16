@@ -260,6 +260,10 @@ copy() {
 
 add() {
   mkdir -p "$path"
+  if [ -z "$value" ]; then
+    echo "can't add a blank value to an environment file"
+    exit 1
+  fi
   if exists; then
     decrypt
     if grep "^$key\=" <<< "$decrypted" > /dev/null 2>&1; then
