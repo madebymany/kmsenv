@@ -166,6 +166,14 @@ validate_key() {
   fi
 }
 
+validate_kms_key() {
+  set_key
+  if [ -z "$key_id" ]; then
+    echo "you have yet to create a kms key, do so with the \"create-key\" command"
+    exit 1
+  fi
+}
+
 validate() {
   if [ "$1" -lt "$2" ]; then
     log "you need to provide args $#"
@@ -327,16 +335,10 @@ remove-service() {
 }
 
 key-id() {
-  set_key
-  if [ -n "$key_id" ]; then
-    echo "$key_id"
-  else
-    echo "key doens't exist, make sure you create it first with \"create-key\""
-  fi
+  echo "$key_id"
 }
 
 create-key() {
-  set_key
   if [[ -z "$key_id" ]]; then
     log "creating key"
     key_id=$(aws kms create-key --query "KeyMetadata.KeyId" --output "text")
@@ -375,20 +377,24 @@ case $cmd in
     key=$1; shift
     value=$1; shift
     env_var="$key=$value"
+    validate_kms_key
     ;;
   "key-id")
     validate $# 1 "$cmd"
     app=$1; shift
+    validate_kms_key
     ;;
   "create-key")
     validate $# 1 "$cmd"
     app=$1; shift
+    set_key
     ;;
   "list")
     validate $# 3 "$cmd"
     app=$1; shift
     env=$1; shift
     service=$1; shift
+    validate_kms_key
     ;;
   "list-services")
     validate $# 2 "$cmd"
@@ -400,6 +406,7 @@ case $cmd in
     app=$1; shift
     env=$1; shift
     service=$1; shift
+    validate_kms_key
     ;;
   "remove-service")
     validate $# 3 "$cmd"
