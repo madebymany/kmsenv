@@ -38,6 +38,7 @@ Usage:       $script [command] [namespace] [environment] -v
                  
   add
   key-id
+  create-key
   list
   list-services
   remove
@@ -60,6 +61,14 @@ EOF
 usage-key-id() {
 cat <<-EOF
 Usage:      $script key-id [namespace]
+
+$namespace_definition
+EOF
+}
+
+usage-create-key() {
+cat <<-EOF
+Usage:      $script create-key [namespace]
 
 $namespace_definition
 EOF
@@ -157,6 +166,15 @@ validate_key() {
   fi
 }
 
+validate() {
+  if [ "$1" -lt "$2" ]; then
+    log "you need to provide args $#"
+    eval "usage-$3"
+    exit 1
+  fi
+}
+
+
 log() {
  if [[ -n "$verbose" ]]; then
    echo "$1"
@@ -194,21 +212,8 @@ clean() {
   rm "$local_path"
 }
 
-key-id() {
-  create_key
-  echo "$key_id"
-}
-
-create_key() {
+set_key() {
   key_id="$(aws kms list-aliases --output text | grep "\salias/$app\s" | awk '{print $4}')"
-  if [[ -z "$key_id" ]]; then
-    log "creating key"
-    key_id=$(aws kms create-key --query "KeyMetadata.KeyId" --output "text")
-    log "creating key alias $app for key id $key_id"
-    aws kms create-alias --alias-name="alias/$app" --target-key-id="$key_id"
-  else
-    log "found key with alias $app, skipping key creation"
-  fi
 }
 
 create_bucket() {
@@ -321,11 +326,24 @@ remove-service() {
   fi
 }
 
-validate() {
-  if [ "$1" -lt "$2" ]; then
-    log "you need to provide args $#"
-    eval "usage-$3"
-    exit 1
+key-id() {
+  set_key
+  if [ -n "$key_id" ]; then
+    echo "$key_id"
+  else
+    echo "key doens't exist, make sure you create it first with \"create-key\""
+  fi
+}
+
+create-key() {
+  set_key
+  if [[ -z "$key_id" ]]; then
+    log "creating key"
+    key_id=$(aws kms create-key --query "KeyMetadata.KeyId" --output "text")
+    log "creating key alias $app for key id $key_id"
+    aws kms create-alias --alias-name="alias/$app" --target-key-id="$key_id"
+  else
+    log "found key with alias $app, skipping key creation"
   fi
 }
 
@@ -359,6 +377,10 @@ case $cmd in
     env_var="$key=$value"
     ;;
   "key-id")
+    validate $# 1 "$cmd"
+    app=$1; shift
+    ;;
+  "create-key")
     validate $# 1 "$cmd"
     app=$1; shift
     ;;
@@ -406,7 +428,6 @@ remote_path="s3://$bucket_name/$env/${service}.pem"
 remote_env_path="s3://$bucket_name/$env/"
 remote_path_copy="s3://$bucket_name/$env/${service_to}.pem"
 
-create_key
 create_bucket
 
 case $cmd in
@@ -416,6 +437,10 @@ case $cmd in
 
   "key-id")
     key-id 
+    ;;
+    
+  "create-key")
+    create-key
     ;;
 
   "list")
