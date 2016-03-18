@@ -248,6 +248,8 @@ list() {
     do
       printf '%s\n' "$line"
     done <<< "$decrypted"
+  else
+    echo "Can't find service $service in environment $env, you need to add a variable to create it"
   fi
 }
 
@@ -280,17 +282,18 @@ add() {
   if exists; then
     decrypt
     if grep "^$key\=" <<< "$decrypted" > /dev/null 2>&1; then
-      value="${value//\//\\/}"
-      output=$(sed "s/^\($key\=\).*/\1$value/" <<< "$decrypted")
+      output=$(sed "s/^\($key\=\).*$/\1${value}/" <<< "$decrypted")
     else
       output="${decrypted}"$'\n'"${env_var}"$'\n'
     fi
   else
     output="$env_var"
   fi
+  output="$(echo "$output" | sort | sed '/./,$!d')"
   encrypt "$local_path_enc" "$output" "$key_id"
   push "$local_path_enc" "$remote_path"
   clean "$local_path_enc"
+  echo "Added $key to $service successfully"
 }
 
 remove() {
@@ -331,6 +334,7 @@ remove-service() {
     else 
       echo "aborting"
     fi
+    echo "Removed $service succesfully from $env"
   fi
 }
 
@@ -375,7 +379,8 @@ case $cmd in
     env=$1; shift
     service=$1; shift
     key=$1; shift
-    value=$1; shift
+    value="${1}"; shift
+    value="${value//\&/\\&}"
     env_var="$key=$value"
     validate_kms_key
     ;;
