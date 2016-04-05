@@ -159,6 +159,26 @@ $environment_definition
 EOF
 }
 
+validate_aws_creds() {
+  local valid=true
+  if test -z "${AWS_ACCESS_KEY_ID+x}"; then
+    echo "please make sure you set AWS_ACCESS_KEY_ID"
+    valid=false
+  fi
+  if test -z "${AWS_DEFAULT_REGION+x}"; then
+    echo "please make sure you set AWS_DEFAULT_REGION"
+    valid=false
+  fi
+  if test -z "${AWS_SECRET_ACCESS_KEY+x}"; then
+    echo "please make sure you set AWS_SECRET_ACCESS_KEY"
+    valid=false
+  fi
+  if test "$valid" = false; then
+    echo "missing aws creds, please export them into your current shell session"
+    exit 1
+  fi
+}
+
 validate_key() {
   if [[ ! "$key" =~ ^[_0-9A-Z]*$ ]]; then
     log "environment variable names have to be all uppercase, be either letters, numbers, or underscores. No other characters are allowed"
@@ -352,6 +372,8 @@ create-key() {
     log "found key with alias $app, skipping key creation"
   fi
 }
+
+validate_aws_creds
 
 if [ $# = 0 ]; then
   usage
