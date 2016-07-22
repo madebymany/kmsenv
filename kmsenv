@@ -128,7 +128,9 @@ EOF
 
 usage-add() {
 cat <<-EOF
-Usage:      $script add [namespace] [environment] [service] [key] [value]
+Usage:      $script add [namespace] [environment] [service]
+
+You will be asked for key, value combinations interactively
 
 $namespace_definition
 
@@ -247,7 +249,7 @@ set_key() {
 create_bucket() {
   if ! aws s3 ls | grep "$bucket_name" > /dev/null 2>&1; then
     log "bucket $bucket_name doesn't exist, creating"
-    aws s4 mb "s3://$bucket_name" > /dev/null 2>&1
+    aws s3 mb "s3://$bucket_name" > /dev/null 2>&1
   fi
 }
 
@@ -293,27 +295,91 @@ copy() {
   fi
 }
 
-add() {
-  mkdir -p "$path"
-  if [ -z "$value" ]; then
-    echo "can't add a blank value to an environment file"
+add-multiple() {
+  input="$1"; shift
+  echo "please enter an environment variable name"
+  read -r key 
+  if [ -z "$key" ]; then
+    echo "please provide a key"
     exit 1
   fi
+  echo "please enter an environment variable value"
+  read -r value
+  if [ -z "$value" ]; then
+    echo "please provide a value"
+    exit 1
+  fi
+  value="${value//\&/\\&}"
+  value="${value//\//\\/}"
+  env_var="$key=$value"
+  if grep "^$key\=" <<< "$input" > /dev/null 2>&1; then
+    modified=("${modified[@]}" "$env_var")
+    output=$(sed "s/^\($key\=\).*$/\1${value}/" <<< "$input")
+  elif [ "$input" = "" ]; then
+    added=("${added[@]}" "$env_var")
+    output="${env_var}"
+  else
+    added=("${added[@]}" "$env_var")
+    output="${input}"$'\n'"${env_var}"$'\n'
+  fi
+  
+  echo ""
+  if [ "${#added[@]}" -gt 0 ]; then
+    echo "adding"
+    for v in "${added[@]}"; do
+      echo -e "   \033[32m\033[1m${v}\033[0m"
+    done
+    echo ""
+  fi
+  if [ "${#modified[@]}" -gt 0 ]; then
+    echo "modified"
+    for v in "${modified[@]}"; do
+      echo -e "   \033[33m\033[1m${v}\033[0m"
+    done
+    echo ""
+  fi
+  confirm "would you like to add another? y/n" add-multiple "$output"
+  unset answer
+  if [ -n "$ex" ]; then
+    break
+  fi
+}
+
+confirm() {
+  local msg="$1"; shift
+  while true; do
+    echo "$msg"
+    read -r answer
+    case ${answer} in
+      y)  
+        "$@"
+        ;;
+      n)  
+        local ex=true
+        ;;
+    esac
+    if [ -n "$ex" ]; then
+      break
+    fi
+  done
+}
+
+add() {
+  declare -a modified
+  declare -a added
+  mkdir -p "$path"
   if exists; then
     decrypt
-    if grep "^$key\=" <<< "$decrypted" > /dev/null 2>&1; then
-      output=$(sed "s/^\($key\=\).*$/\1${value}/" <<< "$decrypted")
-    else
-      output="${decrypted}"$'\n'"${env_var}"$'\n'
-    fi
+    add-multiple "$decrypted"
   else
-    output="$env_var"
+    add-multiple ""
   fi
   output="$(echo "$output" | sort | sed '/./,$!d')"
+  echo "encrypting values"
   encrypt "$local_path_enc" "$output" "$key_id"
+  echo "pushing values to bucket"
   push "$local_path_enc" "$remote_path"
   clean "$local_path_enc"
-  echo "Added $key to $service successfully"
 }
 
 remove() {
@@ -324,9 +390,9 @@ remove() {
     for key in "$@"
     do
       if grep "^$key\=" <<< "$output" > /dev/null 2>&1; then
-        echo "Are you sure you want to remove the variable $key, y/n"
-        read -r confirm
-        if [[ "$confirm" = "y" ]]; then
+        echo "are you sure you want to remove the variable $key, y/n"
+        read -r answer
+        if [[ "$answer" = "y" ]]; then
           output=$(sed "/^\($key\=\).*/d" <<< "$output")
         else
           echo "aborting"
@@ -395,15 +461,11 @@ done
 cmd=$1; shift
 case $cmd in
   "add")
-    validate $# 5 "$cmd"
+    validate $# 3 "$cmd"
     validate_key
     app=$1; shift
     env=$1; shift
     service=$1; shift
-    key=$1; shift
-    value="${1}"; shift
-    value="${value//\&/\\&}"
-    env_var="$key=$value"
     validate_kms_key
     ;;
   "key-id")
